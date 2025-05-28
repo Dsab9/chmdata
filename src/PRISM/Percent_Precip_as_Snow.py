@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import os
 
 class PPS:
-    def __init__(self, start_year, end_year, root_directory, train=3, tsnow=-1):
+    def __init__(self, start_year: int, end_year: int, root_directory: str, train: int = 3, tsnow: int = -1):
         """
         Calculation for percent precipitation as snow from McGabe and Wolock 2009
         https://journals.ametsoc.org/view/journals/eint/13/12/2009ei283.1.xml
@@ -35,7 +35,7 @@ class PPS:
             print("No tmean directory")
 
 
-    def create_file_lists(self):
+    def create_file_lists(self) -> list:
         file_list = []
         for m in self.months:
             month_list = []
@@ -47,7 +47,7 @@ class PPS:
         return file_list
 
 
-    def get_monthly_averages(self, raster_file_lists):
+    def get_monthly_averages(self, raster_file_lists: list):
         for month_list in raster_file_lists:
             raster_arrays = []
             for raster_file in month_list:

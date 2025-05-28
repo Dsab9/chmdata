@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import os
 
 class SI:
-    def __init__(self, start_year, end_year, root_directory):
+    def __init__(self, start_year: int, end_year: int, root_directory: str):
         """
         Calculation for precipitation seasonality index from Imteaz & Hossain 2022
         https://link.springer.com/article/10.1007/s11269-022-03320-z
@@ -31,7 +31,7 @@ class SI:
             print("No ppt directory")
 
 
-    def create_file_lists(self):
+    def create_file_lists(self) -> list:
         file_list = []
         for m in self.months:
             month_list = []
@@ -118,6 +118,10 @@ class SI:
         return SI
 
     def calc_SI(self):
+        """
+        Calculation for precipitation seasonality index from Imteaz & Hossain 2022
+        https://link.springer.com/article/10.1007/s11269-022-03320-z
+        """
         raster_file_lists = self.create_file_lists()
         self.get_monthly_averages(raster_file_lists)
         self.get_annual_average()

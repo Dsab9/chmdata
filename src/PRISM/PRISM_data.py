@@ -3,13 +3,14 @@ import os
 
 
 class PRISM:
-    def __init__(self, start_year, end_year, variable, root_directory):
+    def __init__(self, start_year: int, end_year: int, variable: str, root_directory: str):
         """
         PRISM (Parameter-elevation Regressions on Independent Slopes Model) data downloader
         Utilizes the pyPRISMClimate package
         Available variables include: 'tmean', 'tmin', 'tmax', 'ppt', 'vpdmon', 'vpdmax'
         ppt & tmean required for Seasonality index and %precip as snow calc
 
+        Functions:
         -monthly_data(): gets averaged monthly 4km rasterized data for given time interval
 
         """
@@ -23,6 +24,8 @@ class PRISM:
             os.makedirs(root_directory)
 
     def monthly_data(self):
+        """ gets averaged monthly 4km rasterized data for given time interval """
+
         print(f"Downloading monthly {self.variable} data ...")
         v_directory = os.path.join(self.root_directory, self.variable)
         if not os.path.exists(v_directory):
