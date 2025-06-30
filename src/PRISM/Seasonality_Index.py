@@ -1,24 +1,27 @@
-import rasterio as rio
-from rasterio.plot import show
-import numpy as np
-import matplotlib.pyplot as plt
 import os
 
+import matplotlib.pyplot as plt
+import numpy as np
+import rasterio as rio
+from rasterio.plot import show
+
+
 class SI:
+    """
+    Calculates Seasonality Index from downloaded monthly PRISM data.
+
+    Calculation for precipitation seasonality index from Imteaz & Hossain 2022:
+    https://link.springer.com/article/10.1007/s11269-022-03320-z
+
+    Note: Requires monthly ppt rasters in root directory (see PRISM_data module)
+
+    Args:
+        start_year (int): daily data 1981 to present
+        end_year (int): see above
+        root_directory (str): absolute filepath of root directory where data is downloaded to
+    """
+
     def __init__(self, start_year: int, end_year: int, root_directory: str):
-        """
-        Calculation for precipitation seasonality index from Imteaz & Hossain 2022
-        https://link.springer.com/article/10.1007/s11269-022-03320-z
-
-        -create_file_lists(): compiles needed files from directory
-
-        -get_monthly_averages(): writes raster of monthly average precip to directory
-
-        -calc_seasonality_index(): saves raster of seasonality index to directory
-
-        -calc_SI(): will preform all of the above functions simultaneously
-        """
-
         self.years = list(range(start_year, end_year + 1))
         self.months = list(range(1, 12 + 1))
         self.root_directory = root_directory
@@ -30,8 +33,8 @@ class SI:
         if not os.path.exists(self.precip_directory):
             print("No ppt directory")
 
-
     def create_file_lists(self) -> list:
+        """Compiles list of daily averages from directory"""
         file_list = []
         for m in self.months:
             month_list = []
@@ -42,8 +45,8 @@ class SI:
         print(file_list)
         return file_list
 
-
-    def get_monthly_averages(self, raster_file_lists):
+    def get_monthly_averages(self, raster_file_lists: list):
+        """Uses output from def create_file_lists to generate monthly average ppt rasters."""
         for month_list in raster_file_lists:
             raster_arrays = []
             for raster_file in month_list:
@@ -51,7 +54,8 @@ class SI:
                 with rio.open(path) as src:
                     raster_arrays.append(src.read(1).astype(np.float32))  # Read the first band, convert to float
                     profile = src.profile  # Store metadata for output
-                summed_array = np.nansum(raster_arrays, axis=0)  # axis zero sums across arrays, axis 1 sums within array
+                summed_array = np.nansum(raster_arrays,
+                                         axis=0)  # axis zero sums across arrays, axis 1 sums within array
                 ave_array = summed_array / len(raster_arrays)
             print(f"Doing Maths for Month {self.months[raster_file_lists.index(month_list)]}...")
 
@@ -61,8 +65,8 @@ class SI:
             with rio.open(out_path, 'w', **profile) as dst:
                 dst.write(ave_array, 1)
 
-
     def get_annual_average(self):
+        """Averages monthly ave ppt raster to produce average annual ppt raster."""
         raster_arrays = []
         for m in self.months:
             file = f'avePPT_month{m}.tif'
@@ -84,6 +88,7 @@ class SI:
             dst.write(ave_array, 1)
 
     def calc_seasonality_index(self):
+        """Calculates SI from monthly average and annual average rasters, outputs data as raster."""
         month_arrays = []
         for m in self.months:
             file = f'avePPT_month{m}.tif'
@@ -91,41 +96,37 @@ class SI:
             with rio.open(path) as src:
                 month_arrays.append(src.read(1).astype(np.float32))
 
-        file = f'annual_ppt.tif'
+        file = 'annual_ppt.tif'
         path = os.path.join(self.output_directory, file)
         with rio.open(path) as src:
             annual_array = src.read(1).astype(np.float32)
             profile = src.profile
 
-        file = f'ave_month_ppt.tif'
+        file = 'ave_month_ppt.tif'
         path = os.path.join(self.output_directory, file)
         with rio.open(path) as src:
             ave_month_array = src.read(1).astype(np.float32)
 
-
         abs_dev_arrays = []
         for a in month_arrays:
             dif = np.subtract(a, ave_month_array)
-            abs = np.absolute(dif)
-            abs_dev_arrays.append(abs)
+            abs_ = np.absolute(dif)
+            abs_dev_arrays.append(abs_)
         sum_abs_dev_array = np.nansum(abs_dev_arrays, axis=0)
-        SI = sum_abs_dev_array / annual_array
+        si = sum_abs_dev_array / annual_array
 
         outpath = os.path.join(self.output_directory, 'SI.tif')
         with rio.open(outpath, 'w', **profile) as dst:
-            dst.write(SI, 1)
+            dst.write(si, 1)
 
-        return SI
+        return si
 
     def calc_SI(self):
-        """
-        Calculation for precipitation seasonality index from Imteaz & Hossain 2022
-        https://link.springer.com/article/10.1007/s11269-022-03320-z
-        """
+        """Calculates precip seasonality index skipping intermediary steps, outputs data as raster."""
         raster_file_lists = self.create_file_lists()
         self.get_monthly_averages(raster_file_lists)
         self.get_annual_average()
-        SI = self.calc_seasonality_index()
+        self.calc_seasonality_index()
 
         # # Open raster and plot
         raster_path = os.path.join(self.output_directory, 'SI.tif')

@@ -1,23 +1,32 @@
-import rasterio as rio
-from rasterio.plot import show
-import numpy as np
-import matplotlib.pyplot as plt
 import os
 
+import matplotlib.pyplot as plt
+import numpy as np
+import rasterio as rio
+from rasterio.plot import show
+
+
 class PPS:
-    def __init__(self, start_year: int, end_year: int, root_directory: str, train: int = 3, tsnow: int = -1):
-        """
-        Calculation for percent precipitation as snow from McGabe and Wolock 2009
+    """
+        Calculates percent precip as snow from downloaded monthly PRISM data.
+
+        Calculation for percent precipitation as snow from McGabe and Wolock 2009:
         https://journals.ametsoc.org/view/journals/eint/13/12/2009ei283.1.xml
 
-        -create_file_lists(): compiles needed files from directory
+        Percent snowfall for values between Train and Tsnow follow a linear gradient,
+        default values are provided with the ability to change if desired.
 
-        -get_monthly_averages(): writes raster of monthly average precip to directory
+        Note: Seasonality index module must be run prior to running PPS to aggregate precip data
 
-        -calc_percent_snow(): saves raster of percent snow as precip to directory
+        Args:
+            start_year (int): daily data 1981 to present
+            end_year (int): see above
+            root_directory (str): absolute filepath of root directory where data is downloaded to
+            train (int): Temp, in Celsius, at which % precip is 0% snow (default value is 3)
+            tsnow (int): Temp, in Celsius, at which % precip is 100% snow (default value is -1)
+    """
 
-        -calc_PPS(): will preform all of the above functions simultaneously
-        """
+    def __init__(self, start_year: int, end_year: int, root_directory: str, train: int = 3, tsnow: int = -1):
         self.years = list(range(start_year, end_year + 1))
         self.months = list(range(1, 12 + 1))
         self.root_directory = root_directory
@@ -34,8 +43,8 @@ class PPS:
         if not os.path.exists(self.tmean_directory):
             print("No tmean directory")
 
-
     def create_file_lists(self) -> list:
+        """Compiles list of daily averages (mean temp) from directory"""
         file_list = []
         for m in self.months:
             month_list = []
@@ -46,8 +55,8 @@ class PPS:
         print(file_list)
         return file_list
 
-
     def get_monthly_averages(self, raster_file_lists: list):
+        """Uses output from def create_file_lists to generate monthly average temp rasters."""
         for month_list in raster_file_lists:
             raster_arrays = []
             for raster_file in month_list:
@@ -66,8 +75,8 @@ class PPS:
             with rio.open(out_path, 'w', **profile) as dst:
                 dst.write(ave_array, 1)
 
-
     def calc_percent_snow(self):
+        """Calculates pps from tmean and ppt raster data, outputs data as raster."""
         month_temp_arrays = []
         for m in self.months:
             file = f'tmean_month{m}.tif'
@@ -82,7 +91,7 @@ class PPS:
             with rio.open(path) as src:
                 month_ppt_arrays.append(src.read(1).astype(np.float32))
 
-        file = f'annual_ppt.tif'
+        file = 'annual_ppt.tif'
         path = os.path.join(self.precip_directory, file)
         with rio.open(path) as src:
             annual_ppt = src.read(1).astype(np.float32)
@@ -107,13 +116,11 @@ class PPS:
         return percent_snow
 
     def calc_PPS(self):
-        """
-        Calculation for percent precipitation as snow from McGabe and Wolock 2009
-        https://journals.ametsoc.org/view/journals/eint/13/12/2009ei283.1.xml
-        """
+        """""Calculates percent precip as snow skipping intermediary steps, outputs data as raster."""
+
         raster_file_lists = self.create_file_lists()
         self.get_monthly_averages(raster_file_lists)
-        percent_snow = self.calc_percent_snow()
+        self.calc_percent_snow()
 
         # # Open raster and plot
         raster_path = os.path.join(self.output_directory, 'percent_snow.tif')
@@ -123,7 +130,7 @@ class PPS:
             omit_value = 100
             masked_data = np.where(raster_data == omit_value, np.nan, raster_data)
         fig, ax = plt.subplots()
-        image = show(masked_data, transform=raster_meta['transform'], ax=ax, cmap='viridis')
+        show(masked_data, transform=raster_meta['transform'], ax=ax, cmap='viridis')
         ax.set_title('% Precip as Snow')
 
         plt.show()
