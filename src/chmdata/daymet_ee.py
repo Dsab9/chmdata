@@ -6,6 +6,8 @@ import os
 
 DAYMET_EE = 'NASA/ORNL/DAYMET_V4'
 SRTM_EE = 'USGS/SRTMGL1_003'
+ERA5_EE = 'ECMWF/ERA5_LAND/DAILY_AGGR'
+
 EE_PROJECT = 'ee-saba'
 SCALE_METERS = 1000
 
@@ -96,6 +98,42 @@ def display_asset(asset_path, band_name, layer_name, vis_params=None, auto_min_m
         return None
 
 
+def export_daymet_images(asset_id,source_folder, bucket_name, destination_folder, sub_folder, scale):
+    """exports single daymet immage to a Google Cloud Storage bucket.
+    This function is optimized for a collection of images with a consistent
+    geometry and scale.
+
+    Args:
+        asset_id (str): Name of the asset
+        source_folder (str): The path to the Earth Engine asset folder (e.g., 'users/your-user-name/my_assets').
+        bucket_name (str): The name of the Google Cloud Storage bucket.
+        destination_folder (str): The folder path within the bucket to save the assets.
+        scale (int): The resolution in meters per pixel for the image exports.
+    """
+
+    try:
+        # The ee.Image() call will create a client-side object for the asset.
+        image = ee.Image(f'{source_folder}/{asset_id}')
+        file_name = asset_id
+
+        # Create the export task.
+        task = ee.batch.Export.image.toCloudStorage(
+            image=image,
+            description=f'Export {file_name}',
+            bucket=bucket_name,
+            fileNamePrefix=f'{destination_folder}/{sub_folder}/{file_name}',
+            scale=scale,
+            region=region  # Use the region from the first image for all exports.
+        )
+        task.start()
+        print(
+            f"Export task started: {task.id}. You can monitor its status in the GEE Code Editor Task Manager.")
+    except Exception as e:
+        print(f"An error occurred while trying to export asset {asset_id}: {e}")
+
+
+
+
 def batch_export_daymet_images(source_folder, bucket_name, destination_folder, sub_folder, scale):
     """
     Lists all image assets in a given Earth Engine folder and exports them to a Google Cloud
@@ -141,7 +179,7 @@ def batch_export_daymet_images(source_folder, bucket_name, destination_folder, s
                     image=image,
                     description=f'Export {file_name}',
                     bucket=bucket_name,
-                    fileNamePrefix=os.path.join(destination_folder, sub_folder, file_name),
+                    fileNamePrefix=f'{destination_folder}/{sub_folder}/{file_name}',
                     scale=scale,
                     region=region  # Use the region from the first image for all exports.
                 )
@@ -159,6 +197,11 @@ def return_day(day, area):
     daymet_collection = ee.ImageCollection(DAYMET_EE).filterBounds(area)
     daymet_image = daymet_collection.filterDate(day, ee.Date(day).advance(1, 'day')).first()
     return daymet_image
+
+
+def return_elevation(area):
+    elevation = ee.Image(SRTM_EE).clip(area)
+    return elevation
 
 
 def calc_winter_summer_prcp_ratio(start_day, end_day, area):
@@ -216,6 +259,30 @@ def calc_ave_annual_prcp(start_day, end_day, area, var='prcp'):
     # Check the properties of the final image
     print("Final image properties:", avg_annual_band.getInfo())
     return avg_annual_band
+
+def calc_ave_annual_srad(start_day, end_day, area, var='srad'):
+    def calc_annual_srad(year):
+        start_date = ee.Date.fromYMD(year, 1, 1)
+        end_date = start_date.advance(1, 'year')
+        # Filter the collection for the current year
+        year_collection = daymet_collection.filterDate(start_date, end_date)
+        # Calculate the sum of band data for the year
+        annual_data = year_collection.select(var).mean()
+        # Set a property on the image to store the year, useful for later inspection
+        return annual_data.set('year', year)
+
+    # Load the Daymet V4 daily data
+    daymet_collection = ee.ImageCollection(DAYMET_EE).filter(ee.Filter.date(start_day, end_day)).filterBounds(area)
+    # Create a list of years from the start to end year
+    years = ee.List.sequence(int(start_day.split('-')[0]), int(end_day.split('-')[0]))
+    # Map the function over the list of years to create a collection of annual images
+    annual_band_collection = ee.ImageCollection(years.map(calc_annual_srad))
+    # Reduce the ImageCollection to a single image by taking the mean over all years
+    avg_annual_band = annual_band_collection.mean().rename(f'avg_annual_{var}')
+    # Check the properties of the final image
+    print("Final image properties:", avg_annual_band.getInfo())
+    return avg_annual_band
+
 
 def calc_prcp_stdev(start_day, end_day, area, var='prcp'):
     def calc_annual_prcp(year):
@@ -406,344 +473,343 @@ def calc_PPS(start_day, end_day, area):
     return pps
 
 
-def calc_wd50(start_day, end_day, area):
+def calc_rs_rso(start_day, end_day, area):
     """
-    Calculates the WD50 (Wet Days for 50% of annual precipitation) metric.
-    This is the average number of wettest days per year required to contribute
-    50% of the total annual precipitation.
+          Calculates the gridded average annual the fraction of solar radiation (Rs) to clear-sky solar radiation (Rso)
+          is used to calculate the effect of cloud cover on net longwave radiation (Rn).
+          The function returns a single image of the average annual fraction for the specified area and time period.
 
-    Args:
-        start_day (str): The start date for the calculation in 'YYYY-MM-DD' format.
-        end_day (str): The end date for the calculation in 'YYYY-MM-DD' format.
-        area (ee.Geometry.Rectangle or ee.Geometry.Polygon): The region of interest for the calculation.
+          Args:
+              start_day (str): Start date in 'YYYY-MM-DD' format.
+              end_day (str): End date in 'YYYY-MM-DD' format.
+              area (ee.Geometry): A point, polygon, or other geometry to filter the collection.
 
-    Returns:
-        ee.Image: A single image representing the average annual WD50 for the period.
-    """
-    # Load the Daymet collection and filter by date and area
+          Returns:
+              ee.Image: The average annual radiation fraction image.
+          """
+    # Filter the Daymet collection once at the beginning to get all daily images.
     daymet_collection = ee.ImageCollection(DAYMET_EE).filter(ee.Filter.date(start_day, end_day)).filterBounds(area)
 
-    var = 'prcp'
+    # Check if the collection is empty.
+    collection_size = daymet_collection.size().getInfo()
+    if collection_size == 0:
+        print("Error: The filtered image collection is empty.")
+        print("This could be due to the date range or the specified area being outside the DAYMET data coverage.")
+        return None
 
-    # Get a list of unique years in the collection.
+    # Load a DEM to get elevation once for efficiency
+    elevation = ee.Image(SRTM_EE).select('elevation').toFloat()
+
+    def calculate_daily_frac(image):
+        """
+        Calculates daily frac for a single Daymet image, with error handling.
+        This function returns only the frac band to optimize performance.
+        """
+        # Define a list of required bands.
+        required_bands = ['tmax', 'tmin', 'srad', 'vp']
+
+        # Check if all required bands exist on the image.
+        has_required_bands = image.bandNames().containsAll(required_bands)
+
+        def perform_calculation():
+            # Get bands from the image and explicitly cast to float immediately.
+            tmax = image.select('tmax').toFloat()
+            tmin = image.select('tmin').toFloat()
+            srad = image.select('srad').toFloat()
+            vp = image.select('vp').toFloat()
+
+            # Get image date and location information
+            date = image.date()
+            day_of_year = ee.Image.constant(date.getRelative('day', 'year').add(1))
+
+            # --- Physical Constants and Calculations ---
+            t_mean = tmax.add(tmin).divide(2)
+            # Atmospheric Pressure Calc
+            p = elevation.expression('101.3 * ((293.0 - 0.0065 * elevation) / 293.0)**5.26',
+                                     {'elevation': elevation})
+            gamma = p.multiply(0.000665)
+
+            # Saturation vapor pressure
+            es = tmax.expression('0.6108 * exp((17.27 * T) / (T + 237.3))', {'T': tmax}).add(
+                tmin.expression('0.6108 * exp((17.27 * T) / (T + 237.3))', {'T': tmin})).divide(2)
+
+            # Actual vapor pressure
+            ea = vp.divide(1000)
+
+            # Vapor pressure deficit
+            es_minus_ea = es.subtract(ea)
+
+            # Slope of saturation vapor pressure curve
+            delta = t_mean.expression('4098.0 * es / pow(T_mean + 237.3, 2)', {'T_mean': t_mean, 'es': es})
+
+            # Solar radiation
+            srad_mj_per_day = srad.multiply(0.0864)
+
+            # Net radiation
+            albedo = 0.23
+            rns = srad_mj_per_day.multiply(1 - albedo)
+            # Stefan-Boltzmann constant
+            sigma = 4.903e-9
+
+            # Extraterrestrial radiation (Ra)
+            lat_rad = ee.Image.pixelLonLat().select('latitude').multiply(ee.Number(3.1415926535)).divide(180)
+            dr = day_of_year.expression('1 + 0.033 * cos(2 * PI * day_of_year / 365)',
+                                        {'PI': ee.Number(3.1415926535), 'day_of_year': day_of_year})
+            delta_s = day_of_year.expression('0.409 * sin((2 * PI * day_of_year / 365) - 1.39)',
+                                             {'PI': ee.Number(3.1415926535), 'day_of_year': day_of_year})
+            ws = lat_rad.expression('acos(-tan(latitude) * tan(delta_s))',
+                                    {'latitude': lat_rad, 'delta_s': delta_s}).min(
+                ee.Image.constant(1.57079632679)).max(ee.Image.constant(0.0))
+            ra = dr.expression(
+                '24 * 60 / PI * 0.0820 * dr * (ws * sin(lat) * sin(delta_s) + cos(lat) * cos(delta_s) * sin(ws))', {
+                    'PI': ee.Number(3.1415926535),
+                    'dr': dr,
+                    'ws': ws,
+                    'lat': lat_rad,
+                    'delta_s': delta_s,
+                })
+
+            # Clear-sky solar radiation
+            rso = elevation.expression('(0.75 + 0.00002 * elevation) * ra', {'elevation': elevation, 'ra': ra})
+            rs_rso = srad_mj_per_day.divide(rso).min(ee.Image.constant(1.0)).toFloat().rename('rs_rso')
+            return rs_rso
+
+        return ee.Algorithms.If(has_required_bands, perform_calculation(),
+                                ee.Image.constant(-9999).toFloat().rename('rs_rso'))
+
+    # Calculate annual frac for each year.
     years = ee.List.sequence(ee.Date(start_day).get('year'), ee.Date(end_day).get('year'))
 
-    def calc_annual_wd50(year):
+    def calculate_annual_frac(year):
         """
-        A helper function to calculate the number of wet days for a single year.
-        This function will be mapped over the list of years.
+        Calculates the total frac for a single year by filtering the original collection
+        and then mapping the daily calculation function.
         """
-        # Filter the collection for the current year.
+        # Filter the original daymet collection for the specific year.
         annual_collection = daymet_collection.filter(ee.Filter.calendarRange(year, year, 'year'))
 
-        # Calculate the total annual precipitation.
-        sum_annual = annual_collection.select(var).sum()
-        # calc half of annual precipitation
-        prcp_50 = sum_annual.multiply(0.5)
+        # Map the daily ETo calculation over the annual collection.
+        eto_daily_annual_collection = ee.ImageCollection(annual_collection.map(calculate_daily_frac))
 
-        # 1. Convert the collection to a single multi-band image where each band is a day.
-        #    We select the precipitation band and turn it into a per-pixel array.
-        prcp_array = annual_collection.select(var).toArray()
+        # Remove any images where the daily calculation returned the placeholder value.
+        eto_daily_annual_collection = eto_daily_annual_collection.filter(ee.Filter.neq('rs_rso', -9999))
 
-        # 2. Sort the array values for each pixel in descending order.
-        #    We sort from wettest day to driest day.
-        sorted_prcp = prcp_array.arraySort(prcp_array.multiply(-1))
+        # average rad frac.
+        annual_sum = eto_daily_annual_collection.mean()
 
-        # 3. Calculate the cumulative sum of the sorted precipitation values.
-        #    The result is an array where each element is the sum of the precipitation
-        #    from the wettest days up to that point.
-        cumulative_sum = sorted_prcp.arrayAccum(0, ee.Reducer.sum())
+        # Set a property on the image to identify its year.
+        return ee.Image(annual_sum).set('year', year)
 
-        # 4. Create an array of day indices (from 1 to the number of days in the year).
-        day_indices = ee.Image.pixelLonLat().arrayAccum(0, ee.Reducer.count())
+    # Map the annual calculation function over the list of years to get a collection of annual totals.
+    frac_collection_annual = ee.ImageCollection(years.map(calculate_annual_frac))
 
-        # 5. Create a mask where the cumulative sum is greater than or equal to prcp_50.
-        threshold_mask = cumulative_sum.gte(prcp_50)
+    # Finally, calculate the average annual ETo over the entire period.
+    ave_annual_rad_frac = frac_collection_annual.mean().rename('average_annual_rad_frac')
 
-        # 6. Apply the mask to the day indices array. All values that don't meet the
-        #    threshold will be set to null.
-        masked_indices = day_indices.arrayMask(threshold_mask)
-
-        # 7. Reduce the masked indices array to find the minimum value. This will
-        #    be the index of the first day that surpasses the 50% threshold.
-        #    The result is a 2-D array, so we need to project and get the single value.
-        wd50 = masked_indices.arrayReduce(ee.Reducer.min(), [0]).arrayProject([0]).arrayGet([0])
-
-        return ee.Image(wd50).rename('wd50').set('year', year)
-
-    # Map the calculation function over the list of years.
-    annual_wd50_collection = ee.ImageCollection(years.map(calc_annual_wd50))
-
-    # Finally, calculate the average annual number of wet days over the entire period.
-    ave_annual_wd50 = annual_wd50_collection.mean()
-
-    return ave_annual_wd50
+    return ave_annual_rad_frac
 
 
-def calc_wet_days_per_year(start_day, end_day, area):
-    """
-    Calculates the average number of days per year that have precipitation
-    greater than 1 mm for a given area and period.
-
-    Args:
-        start_day (str): The start date for the calculation in 'YYYY-MM-DD' format.
-        end_day (str): The end date for the calculation in 'YYYY-MM-DD' format.
-        area (ee.Geometry.Rectangle or ee.Geometry.Polygon): The region of interest for the calculation.
-
-    Returns:
-        ee.Image: A single image representing the average annual count of
-                  days with precipitation > 1 mm.
-    """
-    # Load the Daymet collection and filter by date and area
-    daymet_collection = ee.ImageCollection(DAYMET_EE).filter(ee.Filter.date(start_day, end_day)).filterBounds(area)
-
-    var = 'prcp'
-
-    # Get a list of unique years in the collection.
-    years = ee.List.sequence(ee.Date(start_day).get('year'), ee.Date(end_day).get('year'))
-
-    def count_wet_days_for_year(year):
-        """
-        A helper function to count the number of wet days for a single year.
-        This function will be mapped over the list of years.
-        """
-        # Filter the collection for the current year
-        annual_collection = daymet_collection.filter(ee.Filter.calendarRange(year, year, 'year'))
-
-        # Create a binary image where pixels are 1 if precipitation > 0.25, and 0 otherwise.
-        annual_wet_days_count = ee.Algorithms.If(
-            annual_collection.size().gt(0),
-            annual_collection.select(var).map(lambda image: image.gte(1)).sum(),
-            ee.Image.constant(0)
-        )
-
-        return ee.Image(annual_wet_days_count).set('year', year)
-
-    # Map the calculation function over the list of years.
-    annual_wet_days_collection = ee.ImageCollection(years.map(count_wet_days_for_year))
-
-    # Finally, calculate the average annual count over the entire period.
-    ave_wet_days_per_year = annual_wet_days_collection.mean()
-
-    return ave_wet_days_per_year
-
-
-def calc_SDII():
-    """
-        Climate index that measures the average rainfall rate on wet days (days with rainfall of 1 mm or more)
-
-        Args:
-            start_day (str): The start date for the calculation in 'YYYY-MM-DD' format.
-            end_day (str): The end date for the calculation in 'YYYY-MM-DD' format.
-            area (ee.Geometry.Rectangle or ee.Geometry.Polygon): The region of interest for the calculation.
-
-        Returns:
-            ee.Image: A single image representing the average rainfall amount per wet day
-        """
-    # load the ave annual precip asset
-    ave_annual_prcp = ee.Image(f'projects/{EE_PROJECT}/assets/30yr_ave_annual_prcp')
-    # load the wet days asset
-    wet_days = ee.Image(f'projects/{EE_PROJECT}/assets/30yr_prcp_days_annual')
-    sdii = ave_annual_prcp.divide(wet_days)
-    return sdii
-
-
-def calc_CV():
-    """calculates coefficient of variation for two GEE assets given as a percent"""
-    # load the mean asset
-    mean = ee.Image(f'projects/{EE_PROJECT}/assets/30yr_ave_annual_prcp')
-    # load the st_dev asset
-    st_dev = ee.Image(f'projects/{EE_PROJECT}/assets/30yr_annual_prcp_stdev')
-    cv = st_dev.divide(mean).multiply(100)
-    return cv
-
-
-def calc_ave_april_swe(start_day, end_day, area):
-    var = 'swe'
-
-    def calc_april_swe(year):
-        start_date = ee.Date.fromYMD(year, 4, 1)
-        end_date = start_date.advance(1, 'month')
-        # Filter the collection for the current year
-        year_collection = daymet_collection.filterDate(start_date, end_date)
-        # Calculate the ave swe for the month
-        april_data = year_collection.select(var).mean()
-        # Set a property on the image to store the year, useful for later inspection
-        return april_data.set('year', year)
-
-    # Load the Daymet V4 daily data
-    daymet_collection = ee.ImageCollection(DAYMET_EE).filter(ee.Filter.date(start_day, end_day)).filterBounds(area)
-    # Create a list of years from the start to end year
-    years = ee.List.sequence(int(start_day.split('-')[0]), int(end_day.split('-')[0]))
-    # Map the function over the list of years to create a collection of annual images
-    april_swe_collection = ee.ImageCollection(years.map(calc_april_swe))
-    # Reduce the ImageCollection to a single image by taking the mean over all years
-    avg_april_swe = april_swe_collection.mean().rename(f'avg_april_{var}')
-    # Check the properties of the final image
-    print("Final image properties:", avg_april_swe.getInfo())
-    return avg_april_swe
-
-
-def calc_ETo(start_day, end_day, area, wind_speed=2.0):
+def calc_ETo(start_day, end_day, area, wind_speed=False):
     """
        Calculates the gridded average annual ETo using the FAO-56 Penman-Monteith method.
-       ...
-    """
+       The function returns a single image of the average annual ETo for the specified area and time period.
+
+       Args:
+           start_day (str): Start date in 'YYYY-MM-DD' format.
+           end_day (str): End date in 'YYYY-MM-DD' format.
+           area (ee.Geometry): A point, polygon, or other geometry to filter the collection.
+           wind_speed (bool, optional): True subsamples the ERA5-land dataset to compute ave daily surface wind.
+                                        False assumes a constant wind speed of 2.0 m/s
+
+       Returns:
+           ee.Image: The average annual ETo image.
+       """
+    # Filter the Daymet collection once at the beginning to get all daily images.
     daymet_collection = ee.ImageCollection(DAYMET_EE).filter(ee.Filter.date(start_day, end_day)).filterBounds(area)
+    if wind_speed:
+        wind_collection = ee.ImageCollection(ERA5_EE).filter(ee.Filter.date(start_day, end_day)).filterBounds(area)
+
+    # Check if the collection is empty.
+    collection_size = daymet_collection.size().getInfo()
+    if collection_size == 0:
+        print("Error: The filtered image collection is empty.")
+        print("This could be due to the date range or the specified area being outside the DAYMET data coverage.")
+        return None
+
+    # Load a DEM to get elevation once for efficiency
+    elevation = ee.Image(SRTM_EE).select('elevation').toFloat()
+
+    # # --- Verification Step ---
+    # # You can check the elevation at a specific point within your area
+    # sample_point = area.centroid()
+    # elevation_at_point = elevation.sample(sample_point, 1).first().get('elevation').getInfo()
+    #
+    # # Print the result to confirm it's a valid number
+    # if isinstance(elevation_at_point, (int, float)):
+    #     print(f"Verification successful: Elevation data loaded. Sample value at centroid: {elevation_at_point} meters.")
+    # else:
+    #     print(
+    #         "Verification failed: Could not retrieve a valid elevation value. Check your area and the SRTM data source.")
+    #
+    # # --- End Verification Step ---
 
     def calculate_daily_eto(image):
         """
-        Calculates daily ETo for a single Daymet image.
+        Calculates daily ETo for a single Daymet image, with error handling.
+        This function returns only the ETo band to optimize performance.
         """
-        # Get bands from the image and explicitly cast to float immediately.
-        tmax = image.select('tmax').toFloat()
-        tmin = image.select('tmin').toFloat()
-        srad = image.select('srad').toFloat()
-        vp = image.select('vp').toFloat()
+        # Define a list of required bands.
+        required_bands = ['tmax', 'tmin', 'srad', 'vp', 'dayl']
 
-        # Get image date and location information
-        date = image.date()
-        day_of_year = date.getRelative('day', 'year').add(1)
+        # Check if all required bands exist on the image.
+        has_required_bands = image.bandNames().containsAll(required_bands)
 
-        # Load a DEM to get elevation once for efficiency
-        elevation = ee.Image(SRTM_EE).select('elevation').toFloat()  # Also convert elevation to float
+        def perform_calculation():
+            # Get bands from the image and explicitly cast to float immediately.
+            tmax = image.select('tmax').toFloat()
+            tmin = image.select('tmin').toFloat()
+            srad = image.select('srad').toFloat()
+            vp = image.select('vp').toFloat()
+            dayl = image.select('dayl').toFloat()
 
-        # Calculate mean air temperature (Tmean) in degrees C
-        t_mean = tmax.add(tmin).divide(2)
+            # Get image date and location information
+            date = image.date()
+            day_of_year = ee.Image.constant(date.getRelative('day', 'year').add(1))
 
-        # Calculate atmospheric pressure (P) in kPa from elevation (z) in meters
-        p = elevation.expression(
-            '101.3 * pow((293.0 - 0.0065 * b("elevation")) / 293.0, 5.26)',
-            {'elevation': elevation}
-        ).toFloat()
+            # --- Physical Constants and Calculations ---
+            t_mean = tmax.add(tmin).divide(2)
+            # Atmospheric Pressure Calc
+            p = elevation.expression('101.3 * ((293.0 - 0.0065 * elevation) / 293.0)**5.26',
+                                     {'elevation': elevation})
+            gamma = p.multiply(0.000665)
 
-        # Calculate psychrometric constant (gamma) in kPa/C
-        gamma = p.multiply(0.000665).toFloat()
+            # Saturation vapor pressure
+            es = tmax.expression('0.6108 * exp((17.27 * T) / (T + 237.3))', {'T': tmax}).add(
+                tmin.expression('0.6108 * exp((17.27 * T) / (T + 237.3))', {'T': tmin})).divide(2)
 
-        # Calculate saturation vapor pressure (es) at tmax and tmin
-        def sat_vp(temp):
-            return temp.expression(
-                '0.6108 * exp((17.27 * T) / (T + 237.3))',
-                {'T': temp}
-            ).toFloat()
+            # Actual vapor pressure
+            ea = vp.divide(1000)
 
-        es_max = sat_vp(tmax).toFloat()
-        es_min = sat_vp(tmin).toFloat()
-        es = es_max.add(es_min).divide(2).toFloat()
+            # Vapor pressure deficit
+            es_minus_ea = es.subtract(ea)
 
-        # Actual vapor pressure (ea) in kPa
-        ea = vp.divide(1000).toFloat()
+            # Slope of saturation vapor pressure curve
+            delta = t_mean.expression('4098.0 * es / pow(T_mean + 237.3, 2)', {'T_mean': t_mean, 'es': es})
 
-        # Vapor pressure deficit (es - ea)
-        es_minus_ea = es.subtract(ea).toFloat()
+            # Solar radiation
+            srad_mj_per_day = srad.multiply(dayl).divide(ee.Number(1000000))
 
-        # Slope of saturation vapor pressure curve (delta) in kPa/C
-        delta = t_mean.expression(
-            '4098.0 * es / pow(T_mean + 237.3, 2)',
-            {'T_mean': t_mean, 'es': es}
-        ).toFloat()
+            # Net radiation
+            albedo = 0.23
+            rns = srad_mj_per_day.multiply(1 - albedo)
+            # Stefan-Boltzmann constant
+            sigma = 4.903e-9
 
-        # Solar radiation conversion: W/m^2 to MJ/m^2/day
-        srad_mj_per_day = srad.multiply(0.0864).toFloat()
+            # Extraterrestrial radiation (Ra)
+            lat_rad = ee.Image.pixelLonLat().select('latitude').multiply(ee.Number(3.1415926535)).divide(180)
+            dr = day_of_year.expression('1 + 0.033 * cos(2 * PI * day_of_year / 365)',
+                                        {'PI': ee.Number(3.1415926535), 'day_of_year': day_of_year})
+            delta_s = day_of_year.expression('0.409 * sin((2 * PI * day_of_year / 365) - 1.39)',
+                                             {'PI': ee.Number(3.1415926535), 'day_of_year': day_of_year})
+            ws = lat_rad.expression('acos(-tan(latitude) * tan(delta_s))',
+                                    {'latitude': lat_rad, 'delta_s': delta_s}).min(
+                ee.Image.constant(1.57079632679)).max(ee.Image.constant(0.0))
+            ra = dr.expression(
+                '24 * 60 / PI * 0.0820 * dr * (ws * sin(lat) * sin(delta_s) + cos(lat) * cos(delta_s) * sin(ws))', {
+                    'PI': ee.Number(3.1415926535),
+                    'dr': dr,
+                    'ws': ws,
+                    'lat': lat_rad,
+                    'delta_s': delta_s,
+                })
 
-        # Net Radiation (Rn) calculation in MJ/m^2/day
-        albedo = 0.23
-        rns = srad_mj_per_day.multiply(1 - albedo).toFloat()
-        sigma = 4.903e-9
+            # Clear-sky solar radiation
+            rso = elevation.expression('(0.75 + 0.00002 * elevation) * ra', {'elevation': elevation, 'ra': ra})
+            rs_rso = srad_mj_per_day.divide(rso).min(ee.Image.constant(1.0))
 
-        # Extraterrestrial radiation (Ra)
-        lat = ee.Image.pixelLonLat().select('latitude').toFloat()
+            # Net longwave radiation
+            tmax_k = tmax.add(273.15)
+            tmin_k = tmin.add(273.15)
+            rnl = tmax_k.expression(
+                'sigma * ((TmaxK**4 + TminK**4) / 2) * (0.34 - 0.14 * sqrt(ea)) * (1.35 * rs_rso - 0.35)', {
+                    'sigma': ee.Number(sigma),
+                    'TmaxK': tmax_k,
+                    'TminK': tmin_k,
+                    'ea': ea,
+                    'rs_rso': rs_rso
+                })
 
-        dr = day_of_year.expression(
-            '1 + 0.033 * cos(2 * PI * DOY / 365)',
-            {'DOY': day_of_year, 'PI': 3.1415926535}
-        ).toFloat()
+            # Total net radiation
+            rn = rns.subtract(rnl)
 
-        delta_s = day_of_year.expression(
-            '0.409 * sin((2 * PI * DOY / 365) - 1.39)',
-            {'DOY': day_of_year, 'PI': 3.1415926535}
-        ).toFloat()
+            if not wind_speed:
+                # Wind speed is a constant, so make it an image for calculations.
+                wind_speed_img = ee.Image.constant(2.0)
+            else:
+                # --- Fetch and calculate daily wind speed from ERA5 ---
+                date = image.date()
 
-        ws = lat.expression(
-            'acos(-tan(latitude * PI/180) * tan(delta_s))',
-            {'latitude': lat, 'delta_s': delta_s, 'PI': 3.1415926535}
-        ).min(ee.Image.constant(1.57079632679)).max(ee.Image.constant(0.0)).toFloat()
+                # Filter the wind collection for the specific day and select the wind bands
+                wind_image = wind_collection.filterDate(date, date.advance(1, 'day')).first()
+                u_wind = wind_image.select('u_component_of_wind_10m')
+                v_wind = wind_image.select('v_component_of_wind_10m')
 
-        ra = lat.expression(
-            '24 * 60 / PI * 0.0820 * dr * (ws * sin(lat_rad) * sin(delta_s) + cos(lat_rad) * cos(delta_s) * sin(ws))',
-            {
-                'PI': 3.1415926535,
-                'dr': dr,
-                'ws': ws,
-                'lat_rad': lat.multiply(3.1415926535 / 180),
-                'delta_s': delta_s
-            }
-        ).toFloat()
+                # Calculate the wind speed magnitude at 10m
+                wind_speed_10m = u_wind.pow(2).add(v_wind.pow(2)).sqrt()
 
-        # Clear-sky solar radiation (Rso)
-        rso = elevation.expression(
-            '(0.75 + 0.00002 * b("elevation")) * ra_img',
-            {
-                'elevation': elevation,
-                'ra_img': ra
-            }
-        ).toFloat()
+                # Adjust to 2m wind speed by multiplying by 0.75
+                wind_speed_img = wind_speed_10m.multiply(0.75)
 
-        # Rs/Rso ratio
-        rs_rso = srad_mj_per_day.divide(rso).min(ee.Image.constant(1.0)).toFloat()
+            # --- Penman-Monteith equation ---
 
-        # Net longwave radiation (Rnl)
-        rnl = image.expression(
-            'sigma * (TmaxK**4 + TminK**4) / 2 * (0.34 - 0.14 * sqrt(ea)) * (1.35 * Rs_Rso - 0.35)',
-            {
-                'sigma': sigma,
-                'TmaxK': tmax.add(273.15),
-                'TminK': tmin.add(273.15),
-                'ea': ea,
-                'Rs_Rso': rs_rso
-            }
-        ).toFloat()
+            # Numerator and denominator
+            # Corrected: convert constants to images before operations
+            numerator_energy = rn.multiply(0.408).multiply(delta)
 
-        # Net radiation (Rn)
-        rn = rns.subtract(rnl).toFloat()
+            # Corrected: convert 900 to an image before division
+            numerator_aero = gamma.multiply(ee.Image.constant(900).divide(t_mean.add(273))).multiply(
+                wind_speed_img).multiply(es_minus_ea)
 
-        # The Penman-Monteith equation
-        numerator_energy = rn.multiply(0.408).multiply(delta).toFloat()
+            # Corrected: convert 1 to an image before addition
+            denominator = delta.add(gamma.multiply(ee.Image.constant(1).add(wind_speed_img.multiply(0.34))))
 
-        numerator_aero = image.expression(
-            'gamma * (900 / (T_mean + 273)) * wind_speed * (es_minus_ea)',
-            {
-                'gamma': gamma,
-                'T_mean': t_mean,
-                'wind_speed': wind_speed,
-                'es_minus_ea': es_minus_ea
-            }
-        ).toFloat()
+            # Final daily ETo
+            eto_daily = numerator_energy.add(numerator_aero).divide(denominator).toFloat().rename('eto_daily')
 
-        denominator = delta.add(gamma.multiply(1 + 0.34 * wind_speed)).toFloat()
+            return eto_daily
 
-        # Final daily ETo
-        eto_daily = numerator_energy.add(numerator_aero).divide(denominator).toFloat()
+        # If required bands are missing, return a constant image with the 'eto_daily' band to prevent errors.
+        return ee.Algorithms.If(has_required_bands, perform_calculation(),
+                                ee.Image.constant(-9999).toFloat().rename('eto_daily'))
 
-        # Set a property for later aggregation
-        return eto_daily.toFloat().set('date', date)
-
-    # Map the calculation function over the Daymet collection
-    eto_collection_daily = daymet_collection.map(calculate_daily_eto)
-
-    # First, calculate annual ETo for each year.
+    # Calculate annual ETo for each year.
     years = ee.List.sequence(ee.Date(start_day).get('year'), ee.Date(end_day).get('year'))
 
     def calculate_annual_eto(year):
-        annual_collection = eto_collection_daily.filter(ee.Filter.calendarRange(year, year, 'year'))
-        annual_sum = annual_collection.sum()
+        """
+        Calculates the total ETo for a single year by filtering the original collection
+        and then mapping the daily calculation function.
+        """
+        # Filter the original daymet collection for the specific year.
+        annual_collection = daymet_collection.filter(ee.Filter.calendarRange(year, year, 'year'))
 
+        # Map the daily ETo calculation over the annual collection.
+        eto_daily_annual_collection = ee.ImageCollection(annual_collection.map(calculate_daily_eto))
+
+        # Remove any images where the daily calculation returned the placeholder value.
+        eto_daily_annual_collection = eto_daily_annual_collection.filter(ee.Filter.neq('eto_daily', -9999))
+
+        # Sum the daily ETo for the year.
+        annual_sum = eto_daily_annual_collection.sum()
+
+        # Set a property on the image to identify its year.
         return ee.Image(annual_sum).set('year', year)
 
+    # Map the annual calculation function over the list of years to get a collection of annual totals.
     eto_collection_annual = ee.ImageCollection(years.map(calculate_annual_eto))
 
-    # Finally, calculate the average annual ETo over the 30-year period.
-    ave_annual_eto = eto_collection_annual.mean()
+    # Finally, calculate the average annual ETo over the entire period.
+    ave_annual_eto = eto_collection_annual.mean().rename('average_annual_eto')
 
     return ave_annual_eto
 
@@ -756,20 +822,30 @@ if __name__ == "__main__":
     band = 'tmax'  # 'tmin', 'tmax', 'prcp', 'srad', 'vp', 'swe', 'dayl'
     start_date = '1994-01-01'
     end_date = '2023-12-31'
+    # end_date = '1994-12-31'
     bbox = [-118, 42, -100, 52]  # {'west': -118.0, 'south': 42.0, 'east': -100.0, 'north': 52.0}
+    # bbox = [-119, 40, -99, 52]  # big
+    # bbox = [-112.1, 46.4, -111.9, 46.6]  # Helena
     region = ee.Geometry.Rectangle(bbox)
     export_folder = 'EarthEngine_Exports'
-    export_file = '30yr_WD50'
+    export_file = '30yr_ave_annual_srad'
     asset_location = f'projects/{EE_PROJECT}/assets/{export_file}'
-
-    daymet_image = calc_wd50(start_day=start_date, end_day=end_date,area=region)
 
     # daymet_image = calc_CV()
 
-    # daymet_image = calc_ETo(start_day=start_date, end_day=end_date, area=region)
-    # export_file = 'ETo_test2'
-    # start_date = '1994-01-01'
-    # end_date = '1994-12-31'
+    daymet_image = calc_ETo(start_day=start_date, end_day=end_date, area=region, wind_speed=True)
+
+    # daymet_image = return_elevation(area=region)
+
+    # daymet_image = calc_rs_rso(start_day=start_date, end_day=end_date, area=region)
+
+    daymet_image = calc_ave_annual_srad(start_day=start_date, end_day=end_date, area=region)
+
+
+
+
+    # daymet_image = calc_ETo_debugg(start_day=start_date, end_day=end_date, area=region)
+    # export_file = 'ETo_debugg'
 
     # Set up the export task
     task = ee.batch.Export.image.toAsset(
@@ -781,17 +857,17 @@ if __name__ == "__main__":
         crs='EPSG:4326',  # Standard WGS84 CRS
         maxPixels=1e13
     )
-
-    # task = ee.batch.Export.image.toDrive(
-    #     image=daymet_image,
-    #     description=export_file,
-    #     folder=export_folder,
-    #     fileNamePrefix=export_file,
-    #     region=region.getInfo()['coordinates'],  # region must be a GeoJSON-style object
-    #     scale=SCALE_METERS,
-    #     crs='EPSG:4326',  # Standard WGS84 CRS
-    #     maxPixels=1e13
-    # )
+    #
+    # # task = ee.batch.Export.image.toDrive(
+    # #     image=daymet_image,
+    # #     description=export_file,
+    # #     folder=export_folder,
+    # #     fileNamePrefix=export_file,
+    # #     region=region.getInfo()['coordinates'],  # region must be a GeoJSON-style object
+    # #     scale=SCALE_METERS,
+    # #     crs='EPSG:4326',  # Standard WGS84 CRS
+    # #     maxPixels=1e13
+    # # )
 
     task.start()
 
@@ -799,6 +875,13 @@ if __name__ == "__main__":
 
     # batch_export_daymet_images(source_folder=f'projects/{EE_PROJECT}/assets',
     #                            bucket_name='wsb_gis_data',
-    #                            destination_folder='basin_class'
-    #                            sub_folder='daymet'
+    #                            destination_folder='basin_class',
+    #                            sub_folder='daymet',
     #                            scale=1000)
+
+    # export_daymet_images(asset_id='30yr_ave_annual_srad',
+    #                      source_folder=f'projects/{EE_PROJECT}/assets',
+    #                      bucket_name='wsb_gis_data',
+    #                      destination_folder='basin_class',
+    #                      sub_folder='daymet',
+    #                      scale=1000)

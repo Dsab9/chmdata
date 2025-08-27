@@ -37,7 +37,7 @@ def average_yearly_aggregates(
         bbox_east (float): Eastern longitude bound.
         bbox_north (float): Northern latitude bound.
     """
-    print(f"Starting SPEI averaging process for {start_year}-{end_year}...")
+    print(f"Starting averaging process for {start_year}-{end_year}...")
     print(f"OPeNDAP URL: {opendap_url}")
     print(f"Variable: {variable_name}")
     print(f"Bounding Box: W:{bbox_west}, S:{bbox_south}, E:{bbox_east}, N:{bbox_north}")
@@ -453,54 +453,22 @@ def terra_seasonality_index():
 
 if __name__ == "__main__":
 
-    # # Gets Precip and ETo from GRIDMet
-    # START_YEAR = 1984
-    # END_YEAR = 2024
-    # OUTPUT_FOLDER = 'gridmet_output'
-    #
-    # # lat longs of bounds
-    # BBOX = {
-    #     'west': -118.0,
-    #     'south': 42.0,
-    #     'east': -100.0,
-    #     'north': 55.0
-    # }
-    # URL_VAR_NAME = 'pr'
-    # OPENDAP_URL = f'http://thredds.northwestknowledge.net:8080/thredds/dodsC/agg_met_{URL_VAR_NAME}_1979_CurrentYear_CONUS.nc'
-    # VARIABLE_NAME = 'precipitation_amount'
-
-    # Gets Precip and ETo from TerraClimate
-    START_YEAR = 1984
-    END_YEAR = 2024
-    OUTPUT_FOLDER = 'terraclimate_output'
+    # Gets Precip and ETo from GRIDMet
+    START_YEAR = 1994
+    END_YEAR = 2023
+    OUTPUT_FOLDER = 'gridmet_output'
 
     # lat longs of bounds
     BBOX = {
         'west': -118.0,
         'south': 42.0,
         'east': -100.0,
-        'north': 52.0
+        'north': 55.0
     }
-    OPENDAP_URL = r'http://thredds.northwestknowledge.net:8080/thredds/dodsC/agg_terraclimate_ppt_1958_CurrentYear_GLOBE.nc'
-    VARIABLE_NAME = 'ppt'
-    FREQ = 'month'
-
-    avg_total_precip_data = calc_annual_data_and_average(
-        opendap_url=OPENDAP_URL,
-        start_year=START_YEAR,
-        end_year=END_YEAR,
-        variable_name=VARIABLE_NAME,
-        frequency= FREQ,
-        output_dir=OUTPUT_FOLDER,
-        bbox_west=BBOX['west'],
-        bbox_south=BBOX['south'],
-        bbox_east=BBOX['east'],
-        bbox_north=BBOX['north']
-    )
-
-    OPENDAP_URL = r'http://thredds.northwestknowledge.net:8080/thredds/dodsC/agg_terraclimate_pet_1958_CurrentYear_GLOBE.nc'
-    VARIABLE_NAME = 'pet'
-    FREQ = 'month'
+    URL_VAR_NAME = 'pet'
+    OPENDAP_URL = f'http://thredds.northwestknowledge.net:8080/thredds/dodsC/agg_met_{URL_VAR_NAME}_1979_CurrentYear_CONUS.nc'
+    VARIABLE_NAME = 'daily_mean_reference_evapotranspiration_grass'
+    FREQ = 'day'
 
     avg_total_pet_data = calc_annual_data_and_average(
         opendap_url=OPENDAP_URL,
@@ -515,47 +483,28 @@ if __name__ == "__main__":
         bbox_north=BBOX['north']
     )
 
-    if avg_total_precip_data is not None:
-        try:
-            plt.figure(figsize=(12, 10))
-            avg_total_precip_data.plot(x='lon', y='lat', cmap='Blues',
-                                       cbar_kwargs={
-                                           'label': 'Average Annual Precipitation (mm)'})  # Gridmet 'pr' is usually in mm
-            plt.title(f'40-Year Average Annual Total Precipitation ({START_YEAR}-{END_YEAR})')
-            plt.xlabel('Longitude')
-            plt.ylabel('Latitude')
-            plt.grid(True)
-            plt.tight_layout()
-            plt.show()
-        except Exception as e:
-            print(f"Could not plot average total precipitation data: {e}")
-
-    if avg_total_pet_data is not None:
-        try:
-            plt.figure(figsize=(12, 10))
-            avg_total_pet_data.plot(x='lon', y='lat', cmap='Greens',
-                                    cbar_kwargs={
-                                        'label': 'Average Annual Potential Evapotranspiration (mm)'})  # Gridmet 'pet' is usually in mm
-            plt.title(f'40-Year Average Annual Total Potential Evapotranspiration ({START_YEAR}-{END_YEAR})')
-            plt.xlabel('Longitude')
-            plt.ylabel('Latitude')
-            plt.grid(True)
-            plt.tight_layout()
-            plt.show()
-        except Exception as e:
-            print(f"Could not plot average total PET data: {e}")
-
-
-
-    # # SPEI from GRIDMet
-    # OPENDAP_URL = 'http://thredds.northwestknowledge.net:8080/thredds/dodsC/agg_met_spei1y_1979_CurrentYear_CONUS.nc'
-    # VARIABLE_NAME = 'spei'
+    # # Gets Precip and ETo from TerraClimate
+    # START_YEAR = 1994
+    # END_YEAR = 2023
+    # OUTPUT_FOLDER = 'terraclimate_output'
     #
-    # averaged_spei_data = average_yearly_aggregates(
+    # # lat longs of bounds
+    # BBOX = {
+    #     'west': -118.0,
+    #     'south': 42.0,
+    #     'east': -100.0,
+    #     'north': 52.0
+    # }
+    # OPENDAP_URL = r'http://thredds.northwestknowledge.net:8080/thredds/dodsC/agg_terraclimate_ppt_1958_CurrentYear_GLOBE.nc'
+    # VARIABLE_NAME = 'ppt'
+    # FREQ = 'month'
+
+    # avg_total_precip_data = calc_annual_data_and_average(
     #     opendap_url=OPENDAP_URL,
     #     start_year=START_YEAR,
     #     end_year=END_YEAR,
     #     variable_name=VARIABLE_NAME,
+    #     frequency= FREQ,
     #     output_dir=OUTPUT_FOLDER,
     #     bbox_west=BBOX['west'],
     #     bbox_south=BBOX['south'],
@@ -563,21 +512,89 @@ if __name__ == "__main__":
     #     bbox_north=BBOX['north']
     # )
     #
-    # if averaged_spei_data is not None:
-    #     print("\nSuccessfully generated averaged SPEI raster and GeoTIFF.")
+    # OPENDAP_URL = r'http://thredds.northwestknowledge.net:8080/thredds/dodsC/agg_terraclimate_pet_1958_CurrentYear_GLOBE.nc'
+    # VARIABLE_NAME = 'pet'
+    # FREQ = 'month'
     #
-    #     # Optional: Basic Visualization (requires matplotlib)
-    #     try:
-    #         plt.figure(figsize=(10, 8))
-    #         # Use rioxarray's plotting for proper labels/orientation if needed
-    #         # averaged_spei_data.plot.imshow() or .plot() often works directly
-    #         averaged_spei_data.plot(x='lon', y='lat', cmap='RdBu', center=0, cbar_kwargs={'label': 'Average SPEI'})
-    #         plt.title(f'Average SPEI ({START_YEAR}-{END_YEAR})')
-    #         plt.xlabel('Longitude')
-    #         plt.ylabel('Latitude')
-    #         plt.grid(True)
-    #         plt.tight_layout()
-    #         plt.show()
-    #     except Exception as e:
-    #         print(
-    #             f"Could not plot the data. Ensure matplotlib is installed and display environment is set up. Error: {e}")
+    # avg_total_pet_data = calc_annual_data_and_average(
+    #     opendap_url=OPENDAP_URL,
+    #     start_year=START_YEAR,
+    #     end_year=END_YEAR,
+    #     variable_name=VARIABLE_NAME,
+    #     frequency=FREQ,
+    #     output_dir=OUTPUT_FOLDER,
+    #     bbox_west=BBOX['west'],
+    #     bbox_south=BBOX['south'],
+    #     bbox_east=BBOX['east'],
+    #     bbox_north=BBOX['north']
+    # )
+    #
+    # # if avg_total_precip_data is not None:
+    # #     try:
+    # #         plt.figure(figsize=(12, 10))
+    # #         avg_total_precip_data.plot(x='lon', y='lat', cmap='Blues',
+    # #                                    cbar_kwargs={
+    # #                                        'label': 'Average Annual Precipitation (mm)'})  # Gridmet 'pr' is usually in mm
+    # #         plt.title(f'40-Year Average Annual Total Precipitation ({START_YEAR}-{END_YEAR})')
+    # #         plt.xlabel('Longitude')
+    # #         plt.ylabel('Latitude')
+    # #         plt.grid(True)
+    # #         plt.tight_layout()
+    # #         plt.show()
+    # #     except Exception as e:
+    # #         print(f"Could not plot average total precipitation data: {e}")
+    # #
+    # # if avg_total_pet_data is not None:
+    # #     try:
+    # #         plt.figure(figsize=(12, 10))
+    # #         avg_total_pet_data.plot(x='lon', y='lat', cmap='Greens',
+    # #                                 cbar_kwargs={
+    # #                                     'label': 'Average Annual Potential Evapotranspiration (mm)'})  # Gridmet 'pet' is usually in mm
+    # #         plt.title(f'40-Year Average Annual Total Potential Evapotranspiration ({START_YEAR}-{END_YEAR})')
+    # #         plt.xlabel('Longitude')
+    # #         plt.ylabel('Latitude')
+    # #         plt.grid(True)
+    # #         plt.tight_layout()
+    # #         plt.show()
+    # #     except Exception as e:
+    # #         print(f"Could not plot average total PET data: {e}")
+
+
+
+    # SPEI from GRIDMet
+    # OPENDAP_URL = 'http://thredds.northwestknowledge.net:8080/thredds/dodsC/agg_met_spei1y_1979_CurrentYear_CONUS.nc'
+    # VARIABLE_NAME = 'spei'
+
+    OPENDAP_URL = 'http://thredds.northwestknowledge.net:8080/thredds/dodsC/agg_met_srad_1979_CurrentYear_CONUS.nc'
+    VARIABLE_NAME = 'daily_mean_shortwave_radiation_at_surface'
+
+    averaged_spei_data = average_yearly_aggregates(
+        opendap_url=OPENDAP_URL,
+        start_year=START_YEAR,
+        end_year=END_YEAR,
+        variable_name=VARIABLE_NAME,
+        output_dir=OUTPUT_FOLDER,
+        bbox_west=BBOX['west'],
+        bbox_south=BBOX['south'],
+        bbox_east=BBOX['east'],
+        bbox_north=BBOX['north']
+    )
+
+    if averaged_spei_data is not None:
+        print("\nSuccessfully generated averaged SPEI raster and GeoTIFF.")
+
+        # Optional: Basic Visualization (requires matplotlib)
+        try:
+            plt.figure(figsize=(10, 8))
+            # Use rioxarray's plotting for proper labels/orientation if needed
+            # averaged_spei_data.plot.imshow() or .plot() often works directly
+            averaged_spei_data.plot(x='lon', y='lat', cmap='RdBu', center=0, cbar_kwargs={'label': 'Average SPEI'})
+            plt.title(f'Average SPEI ({START_YEAR}-{END_YEAR})')
+            plt.xlabel('Longitude')
+            plt.ylabel('Latitude')
+            plt.grid(True)
+            plt.tight_layout()
+            plt.show()
+        except Exception as e:
+            print(
+                f"Could not plot the data. Ensure matplotlib is installed and display environment is set up. Error: {e}")
