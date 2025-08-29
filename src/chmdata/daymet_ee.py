@@ -238,6 +238,15 @@ def calc_winter_summer_prcp_ratio(start_day, end_day, area):
     return ratio
 
 def calc_ave_annual_prcp(start_day, end_day, area, var='prcp'):
+    """ Args:
+            start_day (str): The start date for the calculation in 'YYYY-MM-DD' format.
+            end_day (str): The end date for the calculation in 'YYYY-MM-DD' format.
+            area (ee.Geometry.Rectangle or ee.Geometry.Polygon): The region of interest for the calculation.
+            var (str): desired band from daymet image (defaults to prcp)
+
+        Returns:
+            ee.Image: A single image representing the average annual band, annual products are a sum of daily..
+        """
     def calc_annual_prcp(year):
         start_date = ee.Date.fromYMD(year, 1, 1)
         end_date = start_date.advance(1, 'year')
@@ -261,6 +270,15 @@ def calc_ave_annual_prcp(start_day, end_day, area, var='prcp'):
     return avg_annual_band
 
 def calc_ave_annual_srad(start_day, end_day, area, var='srad'):
+    """ Args:
+                start_day (str): The start date for the calculation in 'YYYY-MM-DD' format.
+                end_day (str): The end date for the calculation in 'YYYY-MM-DD' format.
+                area (ee.Geometry.Rectangle or ee.Geometry.Polygon): The region of interest for the calculation.
+                var (str): desired band from daymet image (defaults to srad)
+
+            Returns:
+                ee.Image: A single image representing the average annual band, annual products are a mean of dailys.
+            """
     def calc_annual_srad(year):
         start_date = ee.Date.fromYMD(year, 1, 1)
         end_date = start_date.advance(1, 'year')
@@ -307,6 +325,7 @@ def calc_prcp_stdev(start_day, end_day, area, var='prcp'):
     print("Final image properties:", avg_annual_band.getInfo())
     return avg_annual_band
 
+
 def calc_ave_annual_temp(start_day, end_day, area, var):
     def calc_annual_temp(year):
         start_date = ee.Date.fromYMD(year, 1, 1)
@@ -331,6 +350,51 @@ def calc_ave_annual_temp(start_day, end_day, area, var):
     return avg_annual_band
 
 
+def calc_month_tmean(start_day, end_day, area, month):
+    """
+        Calculates the average monthly mean temperature for a specified month over a period of years
+        using Daymet V4 data.
+
+        Args:
+            start_year (int): The starting year for the calculation.
+            end_year (int): The ending year for the calculation.
+            month (int): The month (1-12) for which to calculate the average.
+            area (ee.Geometry.Polygon): The area of interest for the calculation.
+
+        Returns:
+            ee.Image: An image with the average monthly mean temperature for the specified
+                      month over the given time period.
+        """
+    # Load the Daymet V4 daily data
+    daymet_collection = ee.ImageCollection(DAYMET_EE).filter(ee.Filter.date(start_day, end_day)).filterBounds(area)
+    # Create a list of years from the start to end year
+    years = ee.List.sequence(int(start_day.split('-')[0]), int(end_day.split('-')[0]))
+
+    def monthly_mean(year):
+        """
+        Inner function to calculate the mean temperature for a specific month in a given year.
+        This function is mapped over the list of years.
+        """
+        # Filter the Daymet collection for the specific month and year
+        start_date = ee.Date.fromYMD(ee.Number(year), month, 1)
+        end_date = start_date.advance(1, 'month')
+        # Filter the collection by date and location
+        month_data = daymet_collection.filterDate(start_date, end_date).filterBounds(area)
+        # Calculate the mean of tmin and tmax for the month
+        tmin = month_data.select('tmin').mean()
+        tmax = month_data.select('tmax').mean()
+        # Calculate the mean temperature and rename the band
+        tmean = tmin.add(tmax).divide(2).rename('tmean')
+        # Set a property on the image to store the year
+        return tmean.set('year', year)
+
+    # Map the function over the list of years to create a collection of yearly mean images
+    yearly_means_collection = ee.ImageCollection(years.map(monthly_mean))
+    # Reduce the collection to a single image by taking the mean over all years
+    # Rename the final band for clarity
+    avg_monthly_tmean = yearly_means_collection.mean().rename(f'avg_{month:02d}_tmean')
+    return avg_monthly_tmean
+
 def calc_tmean():
     #load the tmin and tmax assets
     tmin_asset = ee.Image(f'projects/{EE_PROJECT}/assets/30yr_annual_tmin')
@@ -338,8 +402,17 @@ def calc_tmean():
     tmean_immage = tmin_asset.add(tmax_asset).divide(2)
     return tmean_immage
 
+
 def calc_PSI(start_day, end_day, area):
-    """precipitation seasonality index 0 - 1.83"""
+    """precipitation seasonality index 0 - 1.83
+     Args:
+            start_day (str): The start date for the calculation in 'YYYY-MM-DD' format.
+            end_day (str): The end date for the calculation in 'YYYY-MM-DD' format.
+            area (ee.Geometry.Rectangle or ee.Geometry.Polygon): The region of interest for the calculation.
+
+        Returns:
+            ee.Image: A single image representing the Precipitation seasonality index for the period
+    """
     var = 'prcp'
     daymet_collection = ee.ImageCollection(DAYMET_EE).filter(ee.Filter.date(start_day, end_day)).filterBounds(area)
     # load the ave annual precip asset
@@ -506,7 +579,7 @@ def calc_rs_rso(start_day, end_day, area):
         This function returns only the frac band to optimize performance.
         """
         # Define a list of required bands.
-        required_bands = ['tmax', 'tmin', 'srad', 'vp']
+        required_bands = ['tmax', 'tmin', 'srad', 'vp', 'dayl']
 
         # Check if all required bands exist on the image.
         has_required_bands = image.bandNames().containsAll(required_bands)
@@ -517,6 +590,7 @@ def calc_rs_rso(start_day, end_day, area):
             tmin = image.select('tmin').toFloat()
             srad = image.select('srad').toFloat()
             vp = image.select('vp').toFloat()
+            dayl = image.select('dayl').toFloat()
 
             # Get image date and location information
             date = image.date()
@@ -527,7 +601,6 @@ def calc_rs_rso(start_day, end_day, area):
             # Atmospheric Pressure Calc
             p = elevation.expression('101.3 * ((293.0 - 0.0065 * elevation) / 293.0)**5.26',
                                      {'elevation': elevation})
-            gamma = p.multiply(0.000665)
 
             # Saturation vapor pressure
             es = tmax.expression('0.6108 * exp((17.27 * T) / (T + 237.3))', {'T': tmax}).add(
@@ -536,20 +609,12 @@ def calc_rs_rso(start_day, end_day, area):
             # Actual vapor pressure
             ea = vp.divide(1000)
 
-            # Vapor pressure deficit
-            es_minus_ea = es.subtract(ea)
-
-            # Slope of saturation vapor pressure curve
-            delta = t_mean.expression('4098.0 * es / pow(T_mean + 237.3, 2)', {'T_mean': t_mean, 'es': es})
-
             # Solar radiation
-            srad_mj_per_day = srad.multiply(0.0864)
+            srad_mj_per_day = srad.multiply(dayl).divide(ee.Number(1000000))
 
             # Net radiation
             albedo = 0.23
             rns = srad_mj_per_day.multiply(1 - albedo)
-            # Stefan-Boltzmann constant
-            sigma = 4.903e-9
 
             # Extraterrestrial radiation (Ra)
             lat_rad = ee.Image.pixelLonLat().select('latitude').multiply(ee.Number(3.1415926535)).divide(180)
@@ -828,18 +893,18 @@ if __name__ == "__main__":
     # bbox = [-112.1, 46.4, -111.9, 46.6]  # Helena
     region = ee.Geometry.Rectangle(bbox)
     export_folder = 'EarthEngine_Exports'
-    export_file = '30yr_ave_annual_srad'
+    export_file = '30yr_ave_July_tmean'
     asset_location = f'projects/{EE_PROJECT}/assets/{export_file}'
 
     # daymet_image = calc_CV()
 
-    daymet_image = calc_ETo(start_day=start_date, end_day=end_date, area=region, wind_speed=True)
+    # daymet_image = calc_ETo(start_day=start_date, end_day=end_date, area=region, wind_speed=True)
 
     # daymet_image = return_elevation(area=region)
 
-    # daymet_image = calc_rs_rso(start_day=start_date, end_day=end_date, area=region)
+    daymet_image = calc_month_tmean(start_day=start_date, end_day=end_date, area=region, month=7)
 
-    daymet_image = calc_ave_annual_srad(start_day=start_date, end_day=end_date, area=region)
+
 
 
 
@@ -869,7 +934,7 @@ if __name__ == "__main__":
     # #     maxPixels=1e13
     # # )
 
-    task.start()
+    # task.start()
 
     print(f"Task {export_file} Sent to Earth Engine")
 
@@ -879,9 +944,9 @@ if __name__ == "__main__":
     #                            sub_folder='daymet',
     #                            scale=1000)
 
-    # export_daymet_images(asset_id='30yr_ave_annual_srad',
-    #                      source_folder=f'projects/{EE_PROJECT}/assets',
-    #                      bucket_name='wsb_gis_data',
-    #                      destination_folder='basin_class',
-    #                      sub_folder='daymet',
-    #                      scale=1000)
+    export_daymet_images(asset_id='30yr_ave_July_tmean',
+                         source_folder=f'projects/{EE_PROJECT}/assets',
+                         bucket_name='wsb_gis_data',
+                         destination_folder='basin_class',
+                         sub_folder='daymet',
+                         scale=1000)

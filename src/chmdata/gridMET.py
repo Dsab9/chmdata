@@ -11,7 +11,7 @@ import xarray as xr
 from tqdm import tqdm
 
 
-def average_yearly_aggregates(
+def average_timeseries(
         opendap_url: str,
         start_year: int,
         end_year: int,
@@ -177,7 +177,7 @@ def calc_annual_data_and_average(
         bbox_north: float
 ):
     """
-    Calculates the average of yearly totals for a given variable of daily data over a specified period,
+    Calculates the average of yearly sums for a given variable of daily data over a specified period,
     and saves the result as NetCDF and GeoTIFF rasters.
 
     Args:
@@ -444,11 +444,8 @@ def calc_annual_data_and_average(
         return None
 
 
-
 def terra_seasonality_index():
     pass
-
-
 
 
 if __name__ == "__main__":
@@ -465,12 +462,30 @@ if __name__ == "__main__":
         'east': -100.0,
         'north': 55.0
     }
-    URL_VAR_NAME = 'pet'
+    # URL_VAR_NAME = 'pr'
+    # OPENDAP_URL = f'http://thredds.northwestknowledge.net:8080/thredds/dodsC/agg_met_{URL_VAR_NAME}_1979_CurrentYear_CONUS.nc'
+    # VARIABLE_NAME = 'precipitation_amount'
+    # FREQ = 'day'
+    #
+    # avg_total_pet_data = calc_annual_data_and_average(
+    #     opendap_url=OPENDAP_URL,
+    #     start_year=START_YEAR,
+    #     end_year=END_YEAR,
+    #     variable_name=VARIABLE_NAME,
+    #     frequency=FREQ,
+    #     output_dir=OUTPUT_FOLDER,
+    #     bbox_west=BBOX['west'],
+    #     bbox_south=BBOX['south'],
+    #     bbox_east=BBOX['east'],
+    #     bbox_north=BBOX['north']
+    # )
+
+    URL_VAR_NAME = 'vp'
     OPENDAP_URL = f'http://thredds.northwestknowledge.net:8080/thredds/dodsC/agg_met_{URL_VAR_NAME}_1979_CurrentYear_CONUS.nc'
-    VARIABLE_NAME = 'daily_mean_reference_evapotranspiration_grass'
+    VARIABLE_NAME = 'daily_minimum_temperature'
     FREQ = 'day'
 
-    avg_total_pet_data = calc_annual_data_and_average(
+    avg_timeseries = calc_annual_data_and_average(
         opendap_url=OPENDAP_URL,
         start_year=START_YEAR,
         end_year=END_YEAR,
@@ -482,6 +497,7 @@ if __name__ == "__main__":
         bbox_east=BBOX['east'],
         bbox_north=BBOX['north']
     )
+
 
     # # Gets Precip and ETo from TerraClimate
     # START_YEAR = 1994
@@ -565,36 +581,36 @@ if __name__ == "__main__":
     # OPENDAP_URL = 'http://thredds.northwestknowledge.net:8080/thredds/dodsC/agg_met_spei1y_1979_CurrentYear_CONUS.nc'
     # VARIABLE_NAME = 'spei'
 
-    OPENDAP_URL = 'http://thredds.northwestknowledge.net:8080/thredds/dodsC/agg_met_srad_1979_CurrentYear_CONUS.nc'
-    VARIABLE_NAME = 'daily_mean_shortwave_radiation_at_surface'
-
-    averaged_spei_data = average_yearly_aggregates(
-        opendap_url=OPENDAP_URL,
-        start_year=START_YEAR,
-        end_year=END_YEAR,
-        variable_name=VARIABLE_NAME,
-        output_dir=OUTPUT_FOLDER,
-        bbox_west=BBOX['west'],
-        bbox_south=BBOX['south'],
-        bbox_east=BBOX['east'],
-        bbox_north=BBOX['north']
-    )
-
-    if averaged_spei_data is not None:
-        print("\nSuccessfully generated averaged SPEI raster and GeoTIFF.")
-
-        # Optional: Basic Visualization (requires matplotlib)
-        try:
-            plt.figure(figsize=(10, 8))
-            # Use rioxarray's plotting for proper labels/orientation if needed
-            # averaged_spei_data.plot.imshow() or .plot() often works directly
-            averaged_spei_data.plot(x='lon', y='lat', cmap='RdBu', center=0, cbar_kwargs={'label': 'Average SPEI'})
-            plt.title(f'Average SPEI ({START_YEAR}-{END_YEAR})')
-            plt.xlabel('Longitude')
-            plt.ylabel('Latitude')
-            plt.grid(True)
-            plt.tight_layout()
-            plt.show()
-        except Exception as e:
-            print(
-                f"Could not plot the data. Ensure matplotlib is installed and display environment is set up. Error: {e}")
+    # OPENDAP_URL = 'http://thredds.northwestknowledge.net:8080/thredds/dodsC/agg_met_srad_1979_CurrentYear_CONUS.nc'
+    # VARIABLE_NAME = 'daily_mean_shortwave_radiation_at_surface'
+    #
+    # averaged_spei_data = average_yearly_aggregates(
+    #     opendap_url=OPENDAP_URL,
+    #     start_year=START_YEAR,
+    #     end_year=END_YEAR,
+    #     variable_name=VARIABLE_NAME,
+    #     output_dir=OUTPUT_FOLDER,
+    #     bbox_west=BBOX['west'],
+    #     bbox_south=BBOX['south'],
+    #     bbox_east=BBOX['east'],
+    #     bbox_north=BBOX['north']
+    # )
+    #
+    # if averaged_spei_data is not None:
+    #     print("\nSuccessfully generated averaged SPEI raster and GeoTIFF.")
+    #
+    #     # Optional: Basic Visualization (requires matplotlib)
+    #     try:
+    #         plt.figure(figsize=(10, 8))
+    #         # Use rioxarray's plotting for proper labels/orientation if needed
+    #         # averaged_spei_data.plot.imshow() or .plot() often works directly
+    #         averaged_spei_data.plot(x='lon', y='lat', cmap='RdBu', center=0, cbar_kwargs={'label': 'Average SPEI'})
+    #         plt.title(f'Average SPEI ({START_YEAR}-{END_YEAR})')
+    #         plt.xlabel('Longitude')
+    #         plt.ylabel('Latitude')
+    #         plt.grid(True)
+    #         plt.tight_layout()
+    #         plt.show()
+    #     except Exception as e:
+    #         print(
+    #             f"Could not plot the data. Ensure matplotlib is installed and display environment is set up. Error: {e}")
